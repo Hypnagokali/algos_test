@@ -29,9 +29,44 @@ impl<V: std::fmt::Debug> Node<V> {
             node.print();
         }
     }
+    fn depth(&self, level: u16) -> u16 {
+        let first = self.children.first();
+
+        if let Some(first) = first {
+            first.depth(level + 1)
+        } else {
+            level + 1
+        }
+    }
 
     fn is_leaf(&self) -> bool {
         self.children.is_empty()
+    }
+
+    #[cfg(test)]
+    fn validate(&self, min_key: Option<u32>, max_key: Option<u32>) {
+        self.check_node_invariants();
+        if let Some(min_key) = min_key {
+            assert!(self.keys.iter().all(|k| *k >= min_key), "All Keys must be greater or equal than min_key. min_key: {}, keys:{:?}", min_key, self.keys);
+        }
+
+        if let Some(max_key) = max_key {
+            assert!(self.keys.iter().all(|k| *k < max_key), "All Keys must be less than max_key. max_key: {}, keys:{:?}", max_key, self.keys);
+        }
+
+        for i in 0..self.children.len() {
+            let child_min = match i {
+                0 => min_key,
+                _ => Some(self.keys[i - 1]),
+            };
+
+            let child_max = match i {
+                i if i < self.keys.len() => Some(self.keys[i]),
+                _ => max_key,
+            };
+
+            self.children[i].validate(child_min, child_max);
+        }
     }
 
     #[cfg(test)]
@@ -41,7 +76,10 @@ impl<V: std::fmt::Debug> Node<V> {
             assert_eq!(self.children.len(), 0, "Children in leaf must be always empty");
             assert_eq!(self.values.len(), self.keys.len(), "Every key must have a value in a leaf");
         } else {
-            assert_eq!(self.children.len() + 1, self.keys.len(), "Internal node must have one more children than keys");
+            assert_eq!(
+                self.children.len(),
+                self.keys.len() + 1, 
+                "Internal node must have one more children than keys. keys: {:?}, children: {:?}", self.keys, self.children);
             assert_eq!(self.values.len(), 0, "Internal node must not have values");
             assert!(!self.children.is_empty(), "Children must not be empty if not leaf: {:?}", self);
         }
@@ -184,10 +222,10 @@ impl<V: Default + std::fmt::Debug> BTree<V> {
         }
     }
 
-    pub fn print(&self) {
-        println!("B+Tree:");
-        self.root.print();
-    } 
+    #[cfg(test)]
+    pub fn validate(&self) {
+        self.root.validate(None, None);
+    }
 
     pub fn insert(&mut self, key: u32, value: V) {
         if self.root.is_full() {
@@ -233,12 +271,13 @@ mod tests {
         btree.insert(50, 50);
         btree.insert(100, 100);
         btree.insert(75, 75);
-        // btree.insert(2, 2);
-        // btree.insert(3,3);
-        
-        btree.print();
+        btree.insert(2, 2);
+        btree.insert(3,3);
         btree.insert(80, 80);
-        btree.print();
-        // println!("{:?}", btree);
+        btree.insert(200, 200);
+        btree.insert(55, 55);
+        btree.insert(60, 60);
+        btree.insert(65, 65);
+        btree.validate();
     }
 }
