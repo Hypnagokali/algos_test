@@ -1,4 +1,4 @@
-use std::mem;
+use std::{collections::VecDeque, mem};
 
 #[derive(Debug)]
 struct Node<V> {
@@ -22,13 +22,6 @@ impl<V> Node<V> {
 }
 
 impl<V: std::fmt::Debug> Node<V> {
-    fn print(&self) {
-        println!("\t{:?}", self.keys);
-        for node in self.children.iter() {
-            print!("\t");
-            node.print();
-        }
-    }
     fn depth(&self, level: u16) -> u16 {
         let first = self.children.first();
 
@@ -37,6 +30,14 @@ impl<V: std::fmt::Debug> Node<V> {
         } else {
             level + 1
         }
+    }
+
+    pub fn min_keys(&self) -> usize {
+        (self.max_keys() as f32 / 2.0).ceil() as usize
+    }
+
+    pub fn max_keys(&self) -> usize {
+        self.max_degree - 1
     }
 
     fn is_leaf(&self) -> bool {
@@ -85,11 +86,6 @@ impl<V: std::fmt::Debug> Node<V> {
         }
 
         assert!(self.max_degree > self.keys.len(), "Max degree must be greater than key len. Keys: {:?}", self.keys);
-
-        if !self.root {
-            // If max_degree is 10, a node may have 4 keys at minimum (t - 1 where 2t is our max_degree).
-            assert!(((self.max_degree / 2) - 1) <= self.keys.len())
-        }
 
         assert!(self.keys.windows(2).all(|pair| pair[0] < pair[1]), "Keys in this node: {:?}", self.keys);
     }
@@ -203,7 +199,7 @@ impl<V: std::fmt::Debug> Node<V> {
     }
 
     pub fn is_full(&self) -> bool {
-        self.keys.len() >= (self.max_degree - 1)
+        self.keys.len() >= self.max_keys()
     }
 }
 
@@ -219,6 +215,44 @@ impl<V: Default + std::fmt::Debug> BTree<V> {
         BTree { 
             root: Node::new(max_degree), 
             max_degree,
+        }
+    }
+
+
+    pub fn print_tree(&self) {
+        let height = self.root.depth(0);
+        let mut queue = VecDeque::new();
+        queue.push_back((&self.root, 1));
+        let mut current_level = 0;
+
+        while !queue.is_empty() {
+            let nodes_in_queue = queue.len();
+
+            for _ in 0..nodes_in_queue {
+                let (node, level) = queue.pop_front().unwrap();
+
+                if level != current_level {
+                    println!();
+                    current_level = level;
+
+                    let indent = (4 * height - 4 * current_level) as usize;
+                    print!("{:indent$}", "", indent = indent);
+                }
+
+                print!("[");
+                let keys = node.keys.iter().map(|k| k.to_string()).collect::<Vec<String>>().join(",");
+                print!("{}", keys);
+                print!("]");
+
+                // spacing between nodes
+                let gap = 2usize.pow((height - current_level) as u32) + 2;
+                print!("{:gap$}", "", gap = gap);
+
+                for child in &node.children {
+                    queue.push_back((child, level + 1));
+                }
+            }
+
         }
     }
 
@@ -246,7 +280,8 @@ impl<V: Default + std::fmt::Debug> BTree<V> {
 }
 
 fn main() {
-
+    let a = (3 as f32 / 2.0).ceil() as usize;
+    println!("{a}");
 }
 
 #[cfg(test)]
@@ -256,12 +291,13 @@ mod tests {
 
     #[test]
     fn init_and_add_values() {
-        let mut btree =BTree::<i32>::new(6);
+        let mut btree =BTree::<i32>::new(4);
         btree.insert(10, 10);
         btree.insert(5, 5);
         btree.insert(80, 80);
         btree.insert(90, 90);
         btree.insert(1, 1);
+        btree.validate();
     }
 
     #[test]
