@@ -201,6 +201,119 @@ impl<V: std::fmt::Debug> Node<V> {
     pub fn is_full(&self) -> bool {
         self.keys.len() >= self.max_keys()
     }
+
+    pub fn can_lend_keys(&self) -> bool {
+        self.keys.len() > self.min_keys()
+    }
+
+    pub fn is_less_than_minimal(&self) -> bool {
+        self.keys.len() < self.min_keys()
+    }
+
+    // Delete a key from this subtree. Returns the removed value if present.
+    pub fn delete(&mut self, key: u32) -> Option<V> {
+        if self.is_leaf() {
+            // try to find key in this leaf
+            if let Some(pos) = self.keys.iter().position(|k| *k == key) {
+                let _k = self.keys.remove(pos);
+                let v = self.values.remove(pos);
+                return Some(v);
+            }
+            return None;
+        }
+
+        let mut node_index = self.keys.iter().enumerate()
+            .find(|(_, k)| key < **k)
+            .map(|(i, _)| i)
+            .unwrap_or(self.children.len() - 1);
+
+        // Refactoring: 
+        // self.merge(node_index)
+        if self.children[node_index].is_less_than_minimal() {
+            if node_index > 0 && self.children[node_index - 1].can_lend_keys() {
+                // split the children slice to get two non-overlapping mutable refs
+                let (left_slice, right_slice) = self.children.split_at_mut(node_index);
+                let left = &mut left_slice[node_index - 1];
+                let child = &mut right_slice[0];
+
+                if child.is_leaf() {
+                    let k = left.keys.pop().unwrap();
+                    let v = left.values.pop().unwrap();
+                    child.keys.insert(0, k);
+                    child.values.insert(0, v);
+                    self.keys[node_index - 1] = child.keys[0];
+                } else {
+                    let left_key = left.keys.pop().unwrap();
+                    let left_child = left.children.pop().unwrap();
+                    let parent_key = self.keys[node_index - 1];
+                    child.keys.insert(0, parent_key);
+                    child.children.insert(0, left_child);
+                    self.keys[node_index - 1] = left_key;
+                }
+            } else if node_index + 1 < self.children.len() && self.children[node_index + 1].can_lend_keys() {
+                // borrow from right sibling using split_at_mut with position node_index+1
+                let (left_slice, right_slice) = self.children.split_at_mut(node_index + 1);
+                let child = &mut left_slice[node_index];
+                let right = &mut right_slice[0];
+
+                if child.is_leaf() {
+                    let k = right.keys.remove(0);
+                    let v = right.values.remove(0);
+                    child.keys.push(k);
+                    child.values.push(v);
+                    self.keys[node_index] = right.keys[0];
+                } else {
+                    let right_key = right.keys.remove(0);
+                    let right_child = right.children.remove(0);
+                    let parent_key = self.keys[node_index];
+                    child.keys.push(parent_key);
+                    child.children.push(right_child);
+                    self.keys[node_index] = right_key;
+                }
+            } else {
+                // must merge with a sibling
+                if node_index > 0 {
+                    let left_index = node_index - 1;
+                    let mut right_node = self.children.remove(node_index);
+                    let left_node = &mut self.children[left_index];
+
+                    if left_node.is_leaf() {
+                        left_node.keys.extend(std::mem::take(&mut right_node.keys).into_iter());
+                        left_node.values.extend(std::mem::take(&mut right_node.values).into_iter());
+                        self.keys.remove(left_index);
+                    } else {
+                        let sep = self.keys.remove(left_index);
+                        left_node.keys.push(sep);
+                        // TODO: use std::mem:take here? Or everywhere drain?
+                        left_node.keys.extend(right_node.keys.drain(..));
+                        left_node.children.extend(right_node.children.drain(..));
+                    }
+
+                    node_index = left_index;
+                } else {
+                    // merge child and right sibling
+                    let mut right_node = self.children.remove(node_index + 1);
+                    let child_node = &mut self.children[node_index];
+                    if child_node.is_leaf() {
+                        child_node.keys.extend(right_node.keys.drain(..));
+                        child_node.values.extend(right_node.values.drain(..));
+                    } else {
+                        let sep = self.keys.remove(node_index);
+                        child_node.keys.push(sep);
+                        child_node.keys.extend(right_node.keys.drain(..));
+                        child_node.children.extend(right_node.children.drain(..));
+                    }
+                    if child_node.is_leaf() {
+                        self.keys.remove(node_index);
+                    }
+                }
+            }
+        }
+
+        let res = self.children[node_index].delete(key);
+
+        res
+    }
 }
 
 // Preemptive B+ Tree
@@ -276,6 +389,22 @@ impl<V: Default + std::fmt::Debug> BTree<V> {
         }
         self.root.insert(key, value);
         // check invariants
+    }
+
+    pub fn delete(&mut self, key: u32) -> Option<V> {
+        let res = self.root.delete(key);
+
+        // if root became internal node with no keys, collapse height
+        if self.root.keys.is_empty() && !self.root.is_leaf() {
+            // take first child as new root
+            if !self.root.children.is_empty() {
+                let mut new_root = self.root.children.remove(0);
+                new_root.root = true;
+                self.root = new_root;
+            }
+        }
+
+        res
     }
 }
 
