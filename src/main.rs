@@ -1,5 +1,11 @@
 use std::{collections::VecDeque, mem};
 
+enum FindKeyResponse {
+    GreaterThanTheLast(usize),
+    Equal(usize),
+    LessThan(usize)
+}
+
 #[derive(Debug)]
 struct Node<V> {
     values: Vec<V>,
@@ -87,7 +93,7 @@ impl<V: std::fmt::Debug> Node<V> {
 
         assert!(self.max_degree > self.keys.len(), "Max degree must be greater than key len. Keys: {:?}", self.keys);
 
-        assert!(self.keys.windows(2).all(|pair| pair[0] < pair[1]), "Keys in this node: {:?}", self.keys);
+        assert!(self.keys.windows(2).all(|pair| pair[0] < pair[1]), "Keys must be sorted. Keys in this node: {:?}", self.keys);
     }
 
     // returns new left node, new right node and the key (K) for the parent
@@ -99,7 +105,7 @@ impl<V: std::fmt::Debug> Node<V> {
         let mut right_children = Vec::new();
         let mut right_values = Vec::new();
 
-        let mut left_keys = Vec::new();
+        let left_keys;
         let mut left_children = Vec::new();
         let mut left_values = Vec::new();
 
@@ -137,21 +143,32 @@ impl<V: std::fmt::Debug> Node<V> {
         (left_node, right_node, promoted_key)
     }
 
-    fn insert_key_value(&mut self, key: u32, value: V) {
-        // println!("INSERT KEY = {} WITH VALUE = {:?}", key, value);
-        let mut index = 0;
+    fn find_key_index(&self, key: u32) -> FindKeyResponse {
         // TODO: replace with binary search
-        for k in self.keys.iter() {
-            if key < *k {
-                break;
+        for (i, &k) in self.keys.iter().enumerate() {
+            if key < k {
+                return FindKeyResponse::LessThan(i);
+            } else if key == k {
+                return FindKeyResponse::Equal(i);
             }
-            index += 1;
         }
+        
+        FindKeyResponse::GreaterThanTheLast(self.keys.len().saturating_sub(1))
+    }
 
-        self.keys.insert(index, key);
-        self.values.insert(index, value);
+    fn insert_key_value(&mut self, key: u32, value: V) {
+        match self.find_key_index(key) {
+            FindKeyResponse::LessThan(i) => {
+                self.keys.insert(i, key);
+                self.values.insert(i, value);
+            },
+            FindKeyResponse::GreaterThanTheLast(_) => {
+                self.keys.push(key);
+                self.values.push(value);
+            },
+            FindKeyResponse::Equal(_) => {},
+        }      
  
-
         #[cfg(test)]
         self.check_node_invariants();
     }
@@ -159,10 +176,8 @@ impl<V: std::fmt::Debug> Node<V> {
     pub fn insert(&mut self, key: u32, value: V) {
         // if is leaf, then insert key and value
         if self.is_leaf() {
-            // println!("I am a leaf: {:?} -> {:?}", self.keys, self.values);
             self.insert_key_value(key, value); 
         } else {
-            // println!("I am an internal node");
             // if not leaf:
 
             // 1. find correct Node
@@ -208,6 +223,19 @@ impl<V: std::fmt::Debug> Node<V> {
 
     pub fn is_less_than_minimal(&self) -> bool {
         self.keys.len() < self.min_keys()
+    }
+
+    pub fn find(&self, key: u32) -> Option<&V> {
+        match self.find_key_index(key) {
+            // is leaf
+            FindKeyResponse::GreaterThanTheLast(_) if self.is_leaf() => None,
+            FindKeyResponse::LessThan(_) if self.is_leaf() => None,
+            FindKeyResponse::Equal(i) if self.is_leaf() => Some(&self.values[i]),
+            // internal node
+            FindKeyResponse::GreaterThanTheLast(i) 
+                | FindKeyResponse::Equal(i) => self.children[i + 1].find(key),
+            FindKeyResponse::LessThan(i) => self.children[i].find(key)
+        }
     }
 
     // Delete a key from this subtree. Returns the removed value if present.
@@ -374,6 +402,10 @@ impl<V: Default + std::fmt::Debug> BTree<V> {
         self.root.validate(None, None);
     }
 
+    pub fn find(&self, key: u32) -> Option<&V> {
+        self.root.find(key)
+    }
+
     pub fn insert(&mut self, key: u32, value: V) {
         if self.root.is_full() {
             let (lnode, rnode, root_key) = self.root.split();
@@ -409,8 +441,7 @@ impl<V: Default + std::fmt::Debug> BTree<V> {
 }
 
 fn main() {
-    let a = (3 as f32 / 2.0).ceil() as usize;
-    println!("{a}");
+
 }
 
 #[cfg(test)]
@@ -444,5 +475,41 @@ mod tests {
         btree.insert(60, 60);
         btree.insert(65, 65);
         btree.validate();
+    }
+
+    #[test]
+    fn find_and_delete() {
+        let mut btree =BTree::<i32>::new(4);
+        btree.insert(1, 1);
+        btree.insert(50, 50);
+        btree.insert(100, 100);
+        btree.insert(75, 75);
+        btree.insert(2, 2);
+        btree.insert(3,3);
+        btree.insert(80, 80);
+        btree.insert(200, 200);
+        btree.insert(55, 55);
+        btree.insert(60, 60);
+        btree.insert(65, 65);
+
+        let val = btree.find(55);
+        assert!(val.is_some());
+        assert_eq!(*val.unwrap(), 55);
+
+        btree.delete(55);
+
+        let val = btree.find(55);
+        assert!(val.is_none());
+
+        let val = btree.find(200);
+        assert!(val.is_some());
+        assert_eq!(*val.unwrap(), 200);
+
+        let val = btree.find(4);
+        assert!(val.is_none());
+
+        let val = btree.find(1);
+        assert!(val.is_some());
+        assert_eq!(*val.unwrap(), 1);
     }
 }
