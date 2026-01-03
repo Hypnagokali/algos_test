@@ -38,7 +38,7 @@ fn key_array_size(max_degree: u16) -> usize {
 }
 
 fn children_offset(max_degree: u16) -> usize {
-    key_offset() + key_array_size(max_degree) + 1
+    key_offset() + key_array_size(max_degree)
 }
 
 fn children_array_size(max_degree: u16) -> usize {
@@ -46,7 +46,7 @@ fn children_array_size(max_degree: u16) -> usize {
 }
 
 fn values_offset(max_degree: u16) -> usize {
-    children_offset(max_degree) + children_array_size(max_degree) + 1
+    children_offset(max_degree) + children_array_size(max_degree)
 }
 
 fn meta_data_to_bytes(store_meta_data: &StoreMetaData) -> Vec<u8> {
@@ -117,9 +117,9 @@ impl From<(Vec<u8>, u16)> for NodePage {
                 break;
             }
         }
-
+        
         let mut children = Vec::new();
-
+        
         let child_offset = children_offset(max_degree);
         for c in 0..max_degree {
             let next_offset = child_offset + (c as usize * 4);
@@ -130,9 +130,9 @@ impl From<(Vec<u8>, u16)> for NodePage {
                 break;
             }
         }
-
+        
         let mut values = Vec::new();
-
+        
         let value_offset = values_offset(max_degree);
         for v in 0..(max_degree - 1) {
             let next_offset = value_offset + (v as usize * 4);
@@ -354,11 +354,40 @@ impl BTreeStore {
         })
     }
 
-    pub fn page_size(&self) -> u32 {
+    fn page_size(&self) -> u32 {
         self.pager.page_size()
     }
 
-    pub fn save_metadata(&self) -> Result<(), BTreeStoreError> {
+    pub fn find(&self, key: u32) -> Result<Option<u32>, BTreeStoreError> {
+        let root = self.root()?;
+
+        Ok(root.find(&self.pager, key))
+    }
+
+    pub fn insert(&mut self, key: u32, value: u32) -> Result<(), BTreeStoreError> {
+        let mut root = self.root()?;
+        if root.is_full() {
+            let (lnode, rnode, root_key) = root.split(&self.pager);
+            let mut new_root = self.pager.allocate_new_page()
+                .map_err(|_| BTreeStoreError { msg: "Cannot allocate new page (op: insert)".to_owned() })?;
+            new_root.keys_mut().push(root_key);
+            new_root.children_mut().push(*lnode.id());
+            new_root.children_mut().push(*rnode.id());
+
+            self.meta_data.borrow_mut().root = Some(*new_root.id());
+            // TODO: new root
+            root = new_root;
+        }
+        
+        root.insert(&self.pager, key, value);
+        self.pager.write_page(&root)
+                .map_err(|_| BTreeStoreError { msg: "Cannot write new root (op: insert)".to_owned() })?;
+
+        self.save_metadata()?;
+        Ok(())
+    }
+
+    fn save_metadata(&self) -> Result<(), BTreeStoreError> {
         let changed = self.meta_data.borrow().changed;
 
         if changed {
@@ -381,10 +410,11 @@ impl BTreeStore {
             Some(root_id) => Ok(self.pager.read_page(root_id)
                     .map_err(|_| BTreeStoreError { msg: "Cannot load root page".to_owned() }))?,
             None => {
-                let root = self.pager.allocate_new_page()
+                let new_root = self.pager.allocate_new_page()
                     .map_err(|_| BTreeStoreError { msg: "Cannot allocate root page".to_owned() })?;
+                self.meta_data.borrow_mut().root = Some(*new_root.id());
                 self.save_metadata()?;
-                Ok(root)
+                Ok(new_root)
             },
         }
 
@@ -396,6 +426,25 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use crate::page_based_bplustree::{btree_store::BTreeStore, node::NodePage};
+
+    #[test]
+    fn insert_and_find() {
+        let temp = NamedTempFile::new().unwrap();
+        let mut btree= BTreeStore::new(temp.path(), 4).unwrap();
+        btree.insert(1, 1).unwrap();
+        btree.insert(10, 10).unwrap();
+        btree.insert(2, 2).unwrap();
+        btree.insert(5, 5).unwrap();
+        btree.insert(100, 100).unwrap();
+        btree.insert(3, 3).unwrap();
+        btree.insert(4, 4).unwrap();
+
+        let row_page = btree.find(100).unwrap();
+
+        assert!(row_page.is_some());
+        assert_eq!(row_page.unwrap(), 100);
+    }
+
 
     #[test]
     fn get_root() {
