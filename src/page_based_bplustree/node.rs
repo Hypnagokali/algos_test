@@ -1,4 +1,4 @@
-use std::{mem, u32};
+use std::{cell::{Ref, RefCell}, mem, u32};
 
 use derive_getters::Getters;
 
@@ -19,21 +19,29 @@ pub struct NodePage {
     children: Vec<u32>, // stores page number (page_id)
     values: Vec<u32>, // each item points to a page of rows
     max_degree: usize,
+    changed: RefCell<bool>, // flag is not stored, indicates, if the node has been changed
     // next_leaf: Option<u32> TODO: linked list between leaves
 }
 
 impl NodePage {
     pub fn keys_mut(&mut self) -> &mut Vec<u32> {
+        *self.changed.borrow_mut() = true;
         &mut self.keys
     }
 
     pub fn children_mut(&mut self) -> &mut Vec<u32> {
+        *self.changed.borrow_mut() = true;
         &mut self.children
     }
 
+    pub fn values_mut(&mut self) -> &mut Vec<u32> {
+        *self.changed.borrow_mut() = true;
+        &mut self.values
+    }
 
     pub fn delete_page(&mut self, next_deleted: Option<u32>) {
         self.deleted = true;
+        *self.changed.borrow_mut() = true;
         self.keys = Vec::new();
         self.children = Vec::new();
         self.values = Vec::new();
@@ -42,6 +50,7 @@ impl NodePage {
 
     pub fn reallocate(&mut self) {
         self.deleted = false;
+        *self.changed.borrow_mut() = true;
         self.keys = Vec::new();
         self.children = Vec::new();
         self.values = Vec::new();
@@ -59,6 +68,7 @@ impl NodePage {
             keys: Vec::new(),
             children: Vec::new(),
             max_degree,
+            changed: RefCell::new(true),
         }
     }
 
@@ -79,6 +89,7 @@ impl NodePage {
             children,
             values,
             max_degree,
+            changed: RefCell::new(false),
         }
 
     }
@@ -186,7 +197,7 @@ impl NodePage {
         left_node.keys = left_keys;
         left_node.children = left_children;
         left_node.max_degree = *self.max_degree();
-
+        
         pager.write_page(&left_node).unwrap();
 
         let mut right_node = pager.allocate_new_page().unwrap();
@@ -197,6 +208,7 @@ impl NodePage {
 
         pager.write_page(&right_node).unwrap();
 
+        *self.changed.borrow_mut() = true;
         (left_node, right_node, promoted_key)
     }
 
@@ -217,10 +229,12 @@ impl NodePage {
             FindKeyResponse::LessThan(i) => {
                 self.keys.insert(i, key);
                 self.values.insert(i, value);
+                *self.changed.borrow_mut() = true;
             },
             FindKeyResponse::GreaterThanTheLast(_) => {
                 self.keys.push(key);
                 self.values.push(value);
+                *self.changed.borrow_mut() = true;
             },
             FindKeyResponse::Equal(_) => {},
         }      
@@ -265,10 +279,12 @@ impl NodePage {
                             node_index -= 1;
                         }
                     }
+                    *self.changed.borrow_mut() = true;
             }
         
             // 3. insert into next node
             if split {
+                // node_index has changed, that's why the child is loaded again
                 child = pager.read_page(self.children[node_index]).unwrap();
             }
 
@@ -315,6 +331,7 @@ impl NodePage {
             if let Some(pos) = self.keys.iter().position(|k| *k == key) {
                 self.keys.remove(pos);
                 let v = self.values.remove(pos);
+                *self.changed.borrow_mut() = true;
                 return Some(v);
             }
             return None;
@@ -362,6 +379,9 @@ impl NodePage {
                     target_node.children.insert(0, left_child);
                     self.keys[node_index - 1] = left_key;
                 }
+                *target_node.changed.borrow_mut() = true;
+                *left_node.changed.borrow_mut() = true;
+                *self.changed.borrow_mut() = true;
 
                 pager.write_page(&target_node).unwrap();
                 pager.write_page(&left_node).unwrap();
@@ -381,6 +401,10 @@ impl NodePage {
                     target_node.children.push(right_child);
                     self.keys[node_index] = right_key;
                 }
+
+                *target_node.changed.borrow_mut() = true;
+                *right_node.changed.borrow_mut() = true;
+                *self.changed.borrow_mut() = true;
 
                 pager.write_page(&target_node).unwrap();
                 pager.write_page(&right_node).unwrap();
@@ -403,7 +427,8 @@ impl NodePage {
                         left_node.keys.extend(std::mem::take(&mut target_node.keys).into_iter());
                         left_node.children.extend(std::mem::take(&mut target_node.children).into_iter());
                     }
-
+                    *left_node.changed.borrow_mut() = true;
+                    *self.changed.borrow_mut() = true;
                     pager.write_page(&left_node).unwrap();
                     pager.delete_page(*target_node.id()).unwrap();
 
@@ -424,6 +449,8 @@ impl NodePage {
                         target_node.children.extend(std::mem::take(&mut right_node.children).into_iter());
                     }
 
+                    *target_node.changed.borrow_mut() = true;
+                    *self.changed.borrow_mut() = true;
                     pager.write_page(&target_node).unwrap();
                     pager.delete_page(*right_node.id()).unwrap();
                 }

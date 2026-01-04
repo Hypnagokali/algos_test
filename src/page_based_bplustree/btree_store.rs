@@ -178,6 +178,9 @@ impl NodePager {
     }
 
     pub fn write_page(&self, node: &NodePage) -> Result<(), NodePagerError> {
+        if !*node.changed().borrow() {
+            return Ok(());
+        }
         // TODO: flag "changed" needed for node, so that the content will only be written, if the content has changed.
         if *node.id() == u32::MAX {
             return Err(NodePagerError { msg: "Cannot save page with the id 0xFFFFFFFF".to_owned() });
@@ -222,6 +225,8 @@ impl NodePager {
             .map_err(|_| NodePagerError { msg: "Cannot go to offset (read_page error)".to_owned() })?;
         file.write(&data)
             .map_err(|e| NodePagerError { msg: format!("Cannot write NodePage: {}", e)})?;
+
+        *node.changed().borrow_mut() = false;
 
         Ok(())
     }
@@ -273,6 +278,8 @@ impl NodePager {
             let next_id = self.meta_data.borrow().number_of_pages - 1;
             let node = NodePage::new(self.meta_data.borrow().max_degree as usize, next_id);
             self.write_page(&node)?;
+            // is likely to change after allocation
+            *node.changed().borrow_mut() = true;
             Ok(node)
         }
 
@@ -386,6 +393,7 @@ impl BTreeStore {
             self.meta_data.borrow_mut().root = Some(*new_root.id());
             // TODO: new root
             root = new_root;
+            *root.changed().borrow_mut() = true;
         }
         
         root.insert(&self.pager, key, value);
@@ -535,6 +543,19 @@ mod tests {
         assert_eq!(row_page.unwrap(), 100);
     }
 
+    #[test]
+    fn insert_and_find_in_root_only() {
+        let temp = NamedTempFile::new().unwrap();
+        let mut btree= BTreeStore::new(temp.path(), 4).unwrap();
+        btree.insert(1, 1).unwrap();
+        btree.insert(10, 10).unwrap();
+
+        let row_page = btree.find(1).unwrap();
+
+        assert!(row_page.is_some());
+        assert_eq!(row_page.unwrap(), 1);
+    }
+
 
     #[test]
     fn get_root() {
@@ -599,6 +620,8 @@ mod tests {
             4
         );
 
+        *page1.changed().borrow_mut() = true;
+
         let temp = NamedTempFile::new().unwrap();
         let btree= BTreeStore::new(temp.path(), 10).unwrap();
         btree.pager.write_page(&page1).unwrap();
@@ -619,6 +642,7 @@ mod tests {
             Vec::new(), vec![1, 2],
             4
         );
+        *page2.changed().borrow_mut() = true;
         btree.pager.write_page(&page2).unwrap();
         let page2_loaded = btree.pager.read_page(1).unwrap();
 
@@ -638,7 +662,7 @@ mod tests {
         assert!(btree.is_err());
         let btree = BTreeStore::new(temp.path(), 4);
         assert!(btree.is_ok());
-        assert_eq!(btree.unwrap().page_size(), 45) // 5 + 4*4 + 3*4 + 3*4 = 45
+        assert_eq!(btree.unwrap().page_size(), 49) // 9 + 4*4 + 3*4 + 3*4 = 45
     }
 
     #[test]
@@ -656,7 +680,7 @@ mod tests {
         assert_eq!(meta_data.first_deleted_page, None);
         assert_eq!(meta_data.max_degree, 10); // Use the degree from meta data section
         assert_eq!(meta_data.number_of_pages, 0);
-        assert_eq!(btree.page_size(), 117)
+        assert_eq!(btree.page_size(), 121) // 9 + 10*4 + 9*4 + 9*4 = 121
     }
 
 }
