@@ -321,18 +321,15 @@ impl<V: std::fmt::Debug> Node<V> {
                 } else {
                     // merge child and right sibling
                     let mut right_node = self.children.remove(node_index + 1);
-                    let child_node = &mut self.children[node_index];
+                    let new_separator = self.keys.remove(node_index);
+                    let child_node: &mut Node<V> = &mut self.children[node_index];
                     if child_node.is_leaf() {
                         child_node.keys.extend(right_node.keys.drain(..));
                         child_node.values.extend(right_node.values.drain(..));
                     } else {
-                        let sep = self.keys.remove(node_index);
-                        child_node.keys.push(sep);
+                        child_node.keys.push(new_separator);
                         child_node.keys.extend(right_node.keys.drain(..));
                         child_node.children.extend(right_node.children.drain(..));
-                    }
-                    if child_node.is_leaf() {
-                        self.keys.remove(node_index);
                     }
                 }
             }

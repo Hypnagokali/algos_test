@@ -178,6 +178,7 @@ impl NodePager {
     }
 
     pub fn write_page(&self, node: &NodePage) -> Result<(), NodePagerError> {
+        // TODO: flag "changed" needed for node, so that the content will only be written, if the content has changed.
         if *node.id() == u32::MAX {
             return Err(NodePagerError { msg: "Cannot save page with the id 0xFFFFFFFF".to_owned() });
         }
@@ -245,7 +246,7 @@ impl NodePager {
 
         let first_deleted_page = self.meta_data.borrow().first_deleted_page;
         let mut node = self.read_page(page_id)?;
-        node.delete(first_deleted_page);
+        node.delete_page(first_deleted_page);
         self.meta_data.borrow_mut().set_first_deleted_page(Some(*node.id()));
 
         Ok(())
@@ -287,6 +288,14 @@ pub struct BTreeStore {
 #[error("B+ Tree error: {msg}")]
 pub struct BTreeStoreError {
     msg: String
+}
+
+impl From<NodePagerError> for BTreeStoreError {
+    fn from(value: NodePagerError) -> Self {
+        Self {
+            msg: format!("BTreeStoreError occurred. err={}", value),
+        }
+    }
 }
 
 impl BTreeStore {
@@ -387,6 +396,24 @@ impl BTreeStore {
         Ok(())
     }
 
+    pub fn delete(&mut self, key: u32) -> Result<Option<u32>, BTreeStoreError> {
+        let mut root = self.root()?;
+        let res = root.delete(&self.pager, key);
+
+        if root.keys().is_empty() && !root.is_leaf() {
+            // Special case where keys are empty and children has length 1 (after merging)
+            debug_assert_eq!(root.children().len(), 1, "Internal root node must have exactly 1 child when it is out of keys");
+            let new_root = root.children_mut().remove(0);
+            root = self.pager.read_page(new_root)?;
+            self.meta_data.borrow_mut().root = Some(new_root);
+        }
+
+        self.pager.write_page(&root);
+        self.save_metadata()?;
+
+        Ok(res)
+    }
+
     fn save_metadata(&self) -> Result<(), BTreeStoreError> {
         let changed = self.meta_data.borrow().changed;
 
@@ -407,11 +434,9 @@ impl BTreeStore {
         let root = self.meta_data.borrow().root;
 
         match root {
-            Some(root_id) => Ok(self.pager.read_page(root_id)
-                    .map_err(|_| BTreeStoreError { msg: "Cannot load root page".to_owned() }))?,
+            Some(root_id) => Ok(self.pager.read_page(root_id)?),
             None => {
-                let new_root = self.pager.allocate_new_page()
-                    .map_err(|_| BTreeStoreError { msg: "Cannot allocate root page".to_owned() })?;
+                let new_root = self.pager.allocate_new_page()?;
                 self.meta_data.borrow_mut().root = Some(*new_root.id());
                 self.save_metadata()?;
                 Ok(new_root)
@@ -426,6 +451,71 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use crate::page_based_bplustree::{btree_store::BTreeStore, node::NodePage};
+
+    #[test]
+    fn delete_everything_except_one_key() {
+        let temp = NamedTempFile::new().unwrap();
+        let mut btree= BTreeStore::new(temp.path(), 4).unwrap();
+        btree.insert(1, 1).unwrap();
+        btree.insert(10, 10).unwrap();
+        btree.insert(2, 2).unwrap();
+        btree.insert(5, 5).unwrap();
+        btree.insert(100, 100).unwrap();
+
+        btree.delete(1).unwrap();
+        btree.delete(10).unwrap();
+        btree.delete(2).unwrap();
+        btree.delete(5).unwrap();
+
+        let row_page = btree.find(100).unwrap();
+
+        assert!(row_page.is_some());
+        assert_eq!(row_page.unwrap(), 100);
+
+        let row_page = btree.find(5).unwrap();
+        assert!(row_page.is_none());
+
+        let row_page = btree.find(2).unwrap();
+        assert!(row_page.is_none());
+
+    }
+
+    #[test]
+    fn insert_delete_find() {
+        let temp = NamedTempFile::new().unwrap();
+        let mut btree= BTreeStore::new(temp.path(), 4).unwrap();
+        btree.insert(1, 1).unwrap();
+        btree.insert(10, 10).unwrap();
+        btree.insert(2, 2).unwrap();
+        btree.insert(5, 5).unwrap();
+        btree.insert(100, 100).unwrap();
+
+        let row_page = btree.find(2).unwrap();
+
+        assert!(row_page.is_some());
+        assert_eq!(row_page.unwrap(), 2);
+
+        // delete key=2 => merge happens: lend key 5 from right node before delete
+        let deleted_value = btree.delete(2).unwrap();
+        assert!(deleted_value.is_some());
+        assert_eq!(deleted_value.unwrap(), 2);
+
+        // try to delete key=2 again will merge the middle with the right node again
+        let deleted_value = btree.delete(2).unwrap();
+        assert!(deleted_value.is_none());
+        // should have lend two times from right node [5, 10, 100], so [5, 10] is on the middle and [100] is on the right, key parent should be 100.
+        // Try to find the lend key 5 in middle node:
+        let row_page = btree.find(5).unwrap();
+
+        assert!(row_page.is_some());
+        assert_eq!(row_page.unwrap(), 5);
+
+        // Try to find a value in the right most node after parents key has been updated:
+        let row_page = btree.find(100).unwrap();
+
+        assert!(row_page.is_some());
+        assert_eq!(row_page.unwrap(), 100);
+    }
 
     #[test]
     fn insert_and_find() {
