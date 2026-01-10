@@ -370,6 +370,7 @@ impl BTreeStore {
         })
     }
 
+    #[allow(dead_code)]
     fn page_size(&self) -> u32 {
         self.pager.page_size()
     }
@@ -416,7 +417,7 @@ impl BTreeStore {
             self.meta_data.borrow_mut().root = Some(new_root);
         }
 
-        self.pager.write_page(&root);
+        self.pager.write_page(&root)?;
         self.save_metadata()?;
 
         Ok(res)

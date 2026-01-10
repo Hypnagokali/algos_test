@@ -105,7 +105,6 @@ impl<V: std::fmt::Debug> Node<V> {
         let mut right_children = Vec::new();
         let mut right_values = Vec::new();
 
-        let left_keys;
         let mut left_children = Vec::new();
         let mut left_values = Vec::new();
 
@@ -122,7 +121,7 @@ impl<V: std::fmt::Debug> Node<V> {
 
             promoted_key = right_keys[0]; // Key stays in right node and promotes
         }
-        left_keys = mem::take(&mut self.keys);
+        let left_keys = mem::take(&mut self.keys);
 
         let left_node = Node {
             values: left_values,
@@ -306,8 +305,8 @@ impl<V: std::fmt::Debug> Node<V> {
                     let left_node = &mut self.children[left_index];
 
                     if left_node.is_leaf() {
-                        left_node.keys.extend(std::mem::take(&mut right_node.keys).into_iter());
-                        left_node.values.extend(std::mem::take(&mut right_node.values).into_iter());
+                        left_node.keys.extend(std::mem::take(&mut right_node.keys));
+                        left_node.values.extend(std::mem::take(&mut right_node.values));
                         self.keys.remove(left_index);
                     } else {
                         let sep = self.keys.remove(left_index);
@@ -335,9 +334,7 @@ impl<V: std::fmt::Debug> Node<V> {
             }
         }
 
-        let res = self.children[node_index].delete(key);
-
-        res
+        self.children[node_index].delete(key)
     }
 }
 
