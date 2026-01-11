@@ -1,6 +1,5 @@
 use std::u32;
 
-pub mod tree;
 pub mod btree_store;
 pub mod node;
 
