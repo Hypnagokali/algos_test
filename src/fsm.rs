@@ -27,6 +27,39 @@ impl BinaryTree {
         }
     }
 
+    pub fn find_available(&self, min_space_needed: u8) -> Option<usize> {
+        // This is a very naive implementation. It fills the heap pages from top to bottom (prefers the left most node)
+        if self.arr[0] < min_space_needed {
+            return None;
+        }
+
+        let mut current = 0;
+        while !self.is_leaf_node(current) {
+            let left_child_index = left_child(current);
+            let right_child_index = left_child_index + 1;
+
+            let left_child_value = self.arr[left_child_index];
+            let right_child_value = if right_child_index < self.arr.len() {
+                self.arr[right_child_index]
+            } else {
+                0
+            };
+
+            if left_child_value >= min_space_needed {
+                current = left_child_index;
+            } else if right_child_value >= min_space_needed {
+                current = right_child_index;
+            } else {
+                // This should never be reached, otherwise the tree is corrupted
+                return None; 
+            }
+        }
+
+        let slot = current - self.non_leaf_nodes;
+
+        Some(slot)
+    }
+
     pub fn set_available_space(&mut self, slot: usize, available_space: u8) {
         let mut node_number = self.non_leaf_nodes + slot;
         if node_number >= self.arr.len() {
@@ -50,7 +83,7 @@ impl BinaryTree {
             let mut new_value = self.arr[left_child_index];
 
             if right_child_index < self.arr.len() {
-                // if right value is hight take that one
+                // if right value is higher take that one
                  new_value = new_value.max(self.arr[right_child_index]);
             }
 
@@ -67,11 +100,70 @@ impl BinaryTree {
             }
         }
     }
+
+    fn is_leaf_node(&self, index: usize) -> bool {
+        // >= because of the mapping from count to index
+        index >= self.non_leaf_nodes
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::fsm::{BinaryTree, left_child, parent, right_child};
+
+    #[test]
+    fn should_find_right_most_leaf_when_tree_is_not_perfect() {
+        let mut tree = BinaryTree::new(7);
+        tree.set_available_space(0, 20);
+        tree.set_available_space(1, 100);
+        tree.set_available_space(4, 10);
+        tree.set_available_space(5, 5);
+        tree.set_available_space(6, 200);
+
+        let slot = tree.find_available(200);
+        assert_eq!(slot, Some(6));
+    }
+
+    #[test]
+    fn should_find_middle_leaf() {
+        let mut tree = BinaryTree::new(7);
+        tree.set_available_space(0, 20);
+        tree.set_available_space(1, 100);
+        tree.set_available_space(3, 200);
+        tree.set_available_space(5, 5);
+        tree.set_available_space(6, 5);
+        tree.set_available_space(7, 20);
+
+        let slot = tree.find_available(200);
+        assert_eq!(slot, Some(3));
+    }
+
+    #[test]
+    fn should_find_right_most_leaf() {
+        let mut tree = BinaryTree::new(8);
+        tree.set_available_space(0, 20);
+        tree.set_available_space(1, 100);
+        tree.set_available_space(4, 10);
+        tree.set_available_space(5, 5);
+        tree.set_available_space(7, 200);
+
+        let slot = tree.find_available(200);
+        assert_eq!(slot, Some(7));
+    }
+
+    #[test]
+    fn should_find_left_most_leaf() {
+        let mut tree = BinaryTree::new(8);
+        tree.set_available_space(0, 200);
+        tree.set_available_space(1, 100);
+        tree.set_available_space(4, 10);
+        tree.set_available_space(5, 5);
+        tree.set_available_space(6, 20);
+
+        let slot = tree.find_available(200);
+        assert_eq!(slot, Some(0));
+    }
+
 
     #[test]
     fn should_update_parents() {
